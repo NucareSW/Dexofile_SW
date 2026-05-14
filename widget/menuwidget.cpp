@@ -23,8 +23,12 @@ MenuWidget::MenuWidget(QWidget *parent) :
     connect(ui->btnCenter, &NcButton::longClicked, this, &MenuWidget::onCenterButtonLongClicked);
     connect(ui->btnRight, &NcButton::longClicked, this, &MenuWidget::onRightButtonLongClicked);
 
-    connect(ui->btnCenter, &NcButton::cancelled, this, [](auto) {
-        navigation::toShutdownDlg();
+    connect(ui->btnCenter, &NcButton::cancelled, this, [this](auto) {
+        // Chỉ hiện ShutdownDialog khi nút Center đang ở trạng thái "Start" (không đang đo)
+        auto centerAction = getActionFor(ActionType::CENTER);
+        if (!centerAction || centerAction->name == "Start") {
+            navigation::toShutdownDlg();
+        }
     });
 
 

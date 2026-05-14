@@ -126,11 +126,11 @@ double ndt::estimate_tc_from_Est_E2(double A, double B, const std::vector<double
     // Ensure params has enough elements to avoid out-of-bounds access
     // This assumes params has at least 3 elements for a1, b1, c1
     if (params.size() < 3) {
-        NC_THROW_ALG_ERROR("Invalid paramter");
+        NC_THROW_ALG_ERROR("Invalid parameter");
     }
-    double a1 = (params.size() > 0) ? params[0] : 0.0;
-    double b1 = (params.size() > 1) ? params[1] : 0.0;
-    double c1 = (params.size() > 2) ? params[2] : 0.0;
+    double a1 = params[0];
+    double b1 = params[1];
+    double c1 = params[2];
 
     // a2, b2, c2 are commented out in MATLAB and k2 is hardcoded to 1.
     // double a2 = (params.size() > 3) ? params[3] : 0.0;

@@ -136,7 +136,7 @@ class Spectrum_t
         return m_data.at(i);
     }
 
-    QString toString() {
+    QString toString() const {
         QStringList parts;
         parts.reserve(N);
         for (size_t i = 0; i < N; ++i) {

@@ -304,12 +304,14 @@ void SpectrumAccumulator::onNcManagerSpectrumReceived(std::shared_ptr<Spectrum> 
     }
 
     if(accumulatedSomething) {
-        m_curResult.executionRealtimeSeconds = static_cast<double>(m_curResult.startTime.msecsTo(m_curResult.finishTime)) / 1000.0;
+        m_curResult.executionRealtimeSeconds = static_cast<double>(m_curResult.startTime.msecsTo(QDateTime::currentDateTime())) / 1000.0;
         m_curResult.cps = prop->getCps();
         m_curResult.count++;
         m_curResult.maxCPS = std::max(m_curResult.maxCPS, m_curResult.cps);
         m_curResult.minCPS = std::min(m_curResult.minCPS, m_curResult.cps);
-        emit accumulationUpdated(); // Parameter-less signal
+        // Tính avgCPS bằng running average theo số lần tích lũy
+        m_curResult.avgCPS = m_curResult.avgCPS + (m_curResult.cps - m_curResult.avgCPS) / static_cast<double>(m_curResult.count);
+        emit accumulationUpdated();
     }
 
     if (m_activeAccumulationType == ActiveSpectrumType::TypeHwSpectrum && m_curResult.hwSpectrum) {

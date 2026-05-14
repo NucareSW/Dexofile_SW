@@ -9,7 +9,7 @@
 using namespace std;
 
 #define NC_BTN_TIMEOUT 4000
-#define NC_BTN_CLICK_TIMEOUT 500
+#define NC_BTN_CLICK_TIMEOUT 800
 
 NcButton::NcButton(QWidget *parent) : QPushButton(parent)
 {

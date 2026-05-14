@@ -128,19 +128,19 @@ SubSettingItem* setting::buildSettingTree() {
             ->setName("Calibration"),
         (new SubSettingItem(ret))
             ->setSettings({
-                (new ChoiceSettingItem({}, ret))
+                (new ChoiceSettingItem({{"Steel", "Steel"}, {"Aluminum", "Aluminum"}, {"Iron", "Iron"}}, ret))
                     ->setName("Material")
                     ->setKey(SettingManager::KEY_PIPE_MATERIAL)
                     ->setShowValue(true),
-                (new ChoiceSettingItem({}, ret))
+                (new ChoiceSettingItem({{"7.85", 7.85}, {"7.87", 7.87}, {"2.70", 2.70}, {"8.00", 8.00}}, ret))
                     ->setName("Density")
                     ->setKey(SettingManager::KEY_PIPE_DENSITY)
                     ->setShowValue(true),
-                (new ChoiceSettingItem({}, ret))
+                (new ChoiceSettingItem({{"5", 5.0}, {"6", 6.0}, {"8", 8.0}, {"10", 10.0}, {"12", 12.0}, {"15", 15.0}, {"20", 20.0}, {"25", 25.0}}, ret))
                     ->setName("Thickness")
                     ->setKey(SettingManager::KEY_PIPE_THICKNESS)
                     ->setShowValue(true),
-                (new ChoiceSettingItem({}, ret))
+                (new ChoiceSettingItem({{"50", 50.0}, {"80", 80.0}, {"100", 100.0}, {"150", 150.0}, {"200", 200.0}, {"250", 250.0}, {"300", 300.0}}, ret))
                     ->setName("Diameter")
                     ->setKey(SettingManager::KEY_PIPE_DIAMETER)
                     ->setShowValue(true),

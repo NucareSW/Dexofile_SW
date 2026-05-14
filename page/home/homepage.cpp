@@ -10,6 +10,7 @@
 #include "model/DetectorInfo.h"
 #include "model/Background.h"
 #include "model/Calibration.h"
+#include <limits>
 using namespace navigation;
 using namespace setting;
 
@@ -190,7 +191,7 @@ void HomePage::stateChanged(AccumulatorState state)
         break;
     }
     case AccumulatorState::Completed: {
-        ui->stateLabel->setText("State: Waiting");
+        ui->stateLabel->setText("State: Completed");
 
         auto ret = m_accumulator->getCurrentResult();
 
@@ -200,17 +201,18 @@ void HomePage::stateChanged(AccumulatorState state)
         Event event;
 
         // Populate Event object
-        event.setSoftwareVersion(QApplication::applicationVersion()); // Or a more appropriate version
+        event.setSoftwareVersion(QApplication::applicationVersion());
         event.setStartedTime(ret.startTime);
         event.setFinishedTime(ret.finishTime);
         event.setLiveTime(ret.startTime.secsTo(ret.finishTime));
         event.setAvgCps(ret.avgCPS);
         event.setMaxCps(ret.maxCPS);
-        event.setMinCps(ret.minCPS);
-        event.setAvgGamma_nSv(0); // Default value
-        event.setMaxGamma_nSv(0); // Default value
-        event.setMinGamma_nSv(0); // Default value
-        event.setAvgFillCps(0);   // Default value
+        double safeMinCPS = (ret.minCPS == std::numeric_limits<double>::max()) ? 0.0 : ret.minCPS;
+        event.setMinCps(safeMinCPS);
+        event.setAvgGamma_nSv(0);
+        event.setMaxGamma_nSv(0);
+        event.setMinGamma_nSv(0);
+        event.setAvgFillCps(0);
 
         // Use IDs from AccumulationResult
         event.setDetectorId(ret.detectorId);
@@ -227,15 +229,24 @@ void HomePage::stateChanged(AccumulatorState state)
             nucare::logW() << "Calibration ID is -1 in accumulation result.";
         }
 
+
         QString spectrumStringData;
         ClogEstimation clog;
 
         if (ret.spectrum) {
             spectrumStringData = ret.spectrum->toString();
             event.setRealTime(ret.spectrum->getRealTime());
-            event.setAvgFillCps(ret.spectrum->getFillCps() / ret.spectrum->getAcqTime());
+            double acqTime = ret.spectrum->getAcqTime();
+            if (acqTime > 0) {
+                event.setAvgFillCps(ret.spectrum->getFillCps() / acqTime);
+            }
 
-            clog = ncMgr->estimateClog(ret.spectrum, ncMgr->getCurrentDetector());
+            if (ncMgr && ncMgr->getCurrentDetector()) {
+
+                nucare::logI() << "homepage: estimateClog";
+
+                clog = ncMgr->estimateClog(ret.spectrum, ncMgr->getCurrentDetector());
+            }
         }
 
         auto isotopeProfile = settingMgr->getIsotopeProfile();
@@ -248,9 +259,15 @@ void HomePage::stateChanged(AccumulatorState state)
         event.setE2Netcount(clog.netCount2);
         event.setPipeMaterial(settingMgr->getPipeMaterial());
         event.setPipeDiameter(settingMgr->getPipeDiameter());
-        event.setPipeThickness(settingMgr->getPipeThickness());
+        double pipeThickness = settingMgr->getPipeThickness();
+        event.setPipeThickness(pipeThickness);
         event.setClogThickness(clog.thickness);
-        event.setClogRatio(clog.thickness / settingMgr->getPipeThickness());
+        double clogRatio = pipeThickness > 0 ? clog.thickness / pipeThickness : 0.0;
+        event.setClogRatio(clogRatio);
+
+        // Cập nhật UI labels với kết quả tính clog
+        ui->clogThickEstValue->setText(QString("%1 mm").arg(clog.thickness, 0, 'f', 1));
+        ui->clogRatioLabel->setText(QString("Clog ratio: %1%").arg(clogRatio * 100.0, 0, 'f', 0));
 
         // Insert event data
         if (dbManager) {

@@ -7,6 +7,8 @@
 #include "component/settingmanager.h"
 #include "util/NcLibrary.h"
 #include "util/ndt_util.h"
+#include <vector>
+#include <cmath>
 #include <QElapsedTimer>
 #include <QDir>
 #include <QFile>
@@ -36,6 +38,174 @@ void appendSpectrumLog(const std::shared_ptr<Spectrum>& spc) {
     ts << QDateTime::currentDateTime().toString(Qt::ISODate)
        << ", SPC: " << spc->toString() << Qt::endl;
 }
+// ─── Gaussian Peak Fitting ────────────────────────────────────────────────────
+// f(x) = A · exp(-(x-μ)² / (2σ²))
+
+struct GaussFitResult {
+    double A     = 0.0;   // amplitude
+    double mu    = 0.0;   // center channel
+    double sigma = 0.0;   // std deviation (channels)
+    double fwhm  = 0.0;   // 2√(2ln2)·σ
+    bool   valid = false;
+};
+
+// Tương ứng MATLAB fitGaussianPeak() — Levenberg-Marquardt, Trust-Region style
+static GaussFitResult fitGaussianPeak(const Spectrum& sp, int chLo, int chHi)
+{
+    GaussFitResult res;
+    const int n = chHi - chLo + 1;
+    if (n < 4) return res;
+
+    // Step 2: Extract ROI data
+    std::vector<double> xv(n), yv(n);
+    double maxY = 0.0; int maxIdx = 0;
+    for (int i = 0; i < n; i++) {
+        xv[i] = chLo + i;
+        yv[i] = sp.at(chLo + i);
+        if (yv[i] > maxY) { maxY = yv[i]; maxIdx = i; }
+    }
+    if (maxY <= 0.0) return res;
+
+    // Step 4: Initial guess
+    double A     = maxY;
+    double mu    = xv[maxIdx];
+    double sigma = std::max(1.0, (chHi - chLo) / 6.0);
+
+    const double A_lo = 0.0,   A_hi = maxY * 1.5;
+    const double mu_lo = chLo, mu_hi = chHi;
+    const double sg_lo = 0.5,  sg_hi = (chHi - chLo) / 2.0;
+
+    auto clampD = [](double v, double lo, double hi) {
+        return v < lo ? lo : (v > hi ? hi : v);
+    };
+    auto ssr = [&](double _A, double _mu, double _sg) {
+        double s = 0;
+        for (int i = 0; i < n; i++) {
+            double dx = xv[i] - _mu;
+            double r  = yv[i] - _A * std::exp(-dx*dx / (2.0*_sg*_sg));
+            s += r*r;
+        }
+        return s;
+    };
+
+    // Levenberg-Marquardt (max 3000 iter, tol 1e-8)
+    double lambda = 0.01;
+    for (int iter = 0; iter < 3000; iter++) {
+        double JtJ[3][3] = {}, JtR[3] = {};
+        for (int i = 0; i < n; i++) {
+            double dx = xv[i] - mu;
+            double e  = std::exp(-dx*dx / (2.0*sigma*sigma));
+            double r  = yv[i] - A * e;
+            double J[3] = {
+                e,
+                A * dx / (sigma*sigma) * e,
+                A * dx*dx / (sigma*sigma*sigma) * e
+            };
+            for (int p = 0; p < 3; p++) {
+                JtR[p] += J[p] * r;
+                for (int q = 0; q < 3; q++) JtJ[p][q] += J[p] * J[q];
+            }
+        }
+
+        // (J^T·J + λ·diag)·δ = J^T·r
+        double M[3][3];
+        for (int p = 0; p < 3; p++) {
+            for (int q = 0; q < 3; q++) M[p][q] = JtJ[p][q];
+            M[p][p] += lambda * std::max(JtJ[p][p], 1e-10);
+        }
+
+        // Giải 3×3 bằng Cramer's rule
+        auto det3 = [](double m[3][3]) {
+            return m[0][0]*(m[1][1]*m[2][2] - m[1][2]*m[2][1])
+                 - m[0][1]*(m[1][0]*m[2][2] - m[1][2]*m[2][0])
+                 + m[0][2]*(m[1][0]*m[2][1] - m[1][1]*m[2][0]);
+        };
+        double detM = det3(M);
+        if (std::abs(detM) < 1e-30) { lambda *= 10.0; continue; }
+
+        double delta[3];
+        for (int p = 0; p < 3; p++) {
+            double Mc[3][3];
+            for (int r2 = 0; r2 < 3; r2++)
+                for (int c = 0; c < 3; c++)
+                    Mc[r2][c] = (c == p) ? JtR[r2] : M[r2][c];
+            delta[p] = det3(Mc) / detM;
+        }
+
+        double A_n  = clampD(A + delta[0], A_lo, A_hi);
+        double mu_n = clampD(mu + delta[1], mu_lo, mu_hi);
+        double sg_n = clampD(sigma + delta[2], sg_lo, sg_hi);
+
+        if (ssr(A_n, mu_n, sg_n) < ssr(A, mu, sigma)) {
+            double dA = A_n-A, dmu = mu_n-mu, dsg = sg_n-sigma;
+            A = A_n; mu = mu_n; sigma = sg_n;
+            lambda /= 10.0;
+            if (dA*dA + dmu*dmu + dsg*dsg < 1e-16) break;
+        } else {
+            lambda *= 10.0;
+            if (lambda > 1e10) break;
+        }
+    }
+
+    res = {A, mu, sigma,
+           2.0 * std::sqrt(2.0 * std::log(2.0)) * sigma,
+           true};
+    return res;
+}
+
+// Tương ứng MATLAB GetNetcoutnfromGaus()
+// Tính net count trong ±FWHM/2 bằng tích phân Gaussian:
+//   ∫_{-FWHM/2}^{+FWHM/2} A·exp(-(x-μ)²/2σ²) dx = A·σ·√(2π)·erf(√(ln2))
+static double getNetCountFromGauss(const GaussFitResult& params)
+{
+    if (!params.valid || std::isnan(params.A)) return 0.0;
+    static const double K = std::sqrt(2.0 * M_PI) * std::erf(std::sqrt(std::log(2.0)));
+    return params.A * params.sigma * K;
+}
+
+// Lưu kết quả fitting + phổ PPChSpec ra file text.
+// Luôn ghi append, tạo mới nếu file chưa tồn tại.
+static void saveFitResultToFile(const Spectrum& ppChSpec,
+                                double acqTime,
+                                const GaussFitResult& fit1, double peakEn1,
+                                const GaussFitResult& fit2, double peakEn2,
+                                double totalEn1, double totalEn2,
+                                double thickness_peak1, double thickness_peak2)
+{
+    const QString filePath = ComponentManager::instance().dataDir() + "/NDT_FitResult.txt";
+    QFile f(filePath);
+    if (!f.open(QIODevice::Append | QIODevice::Text)) {
+        nucare::logW() << "saveFitResultToFile: cannot open/create" << filePath;
+        return;
+    }
+
+    QTextStream ts(&f);
+    const QString now = QDateTime::currentDateTime().toString("yyyy-MM-dd HH:mm:ss.zzz");
+
+    ts << "===== " << now << " =====\n";
+    ts << "AcqTime    : " << acqTime << " s\n";
+    ts << QString("Peak1 (%1 keV): mu=%2  sigma=%3  FWHM=%4  NetCount=%5  totalEn=%6  [%7]\n")
+           .arg(peakEn1,                   0, 'f', 1)
+           .arg(fit1.mu,                   0, 'f', 3)
+           .arg(fit1.sigma,                0, 'f', 3)
+           .arg(fit1.fwhm,                 0, 'f', 3)
+           .arg(getNetCountFromGauss(fit1), 0, 'f', 4)
+           .arg(totalEn1,                  0, 'f', 6)
+           .arg(fit1.valid ? "OK" : "failed");
+    ts << QString("Peak2 (%1 keV): mu=%2  sigma=%3  FWHM=%4  NetCount=%5  totalEn=%6  [%7]\n")
+           .arg(peakEn2,                   0, 'f', 1)
+           .arg(fit2.mu,                   0, 'f', 3)
+           .arg(fit2.sigma,                0, 'f', 3)
+           .arg(fit2.fwhm,                 0, 'f', 3)
+           .arg(getNetCountFromGauss(fit2), 0, 'f', 4)
+           .arg(totalEn2,                  0, 'f', 6)
+           .arg(fit2.valid ? "OK" : "failed");
+    ts << QString("Thickness Peak1: %1 mm\n").arg(thickness_peak1, 0, 'f', 3);
+    ts << QString("Thickness Peak2: %1 mm\n").arg(thickness_peak2, 0, 'f', 3);
+    ts << "PPChSpec[" << ppChSpec.getSize() << "]: " << ppChSpec.toString() << "\n";
+    ts << "\n";
+}
+
 } // namespace
 
 NcManager::NcManager(const QString& tag)
@@ -130,8 +300,6 @@ void NcManager::computeCalibration(nucare::DetectorComponent *dev, std::shared_p
     }
 
     logD() << "Peak calibs: " << peaks[0] << ',' << peaks[1] << ',' << K40_Ch;
-
-
 
     Coeffcients foundPeaks = {peaks[0], peaks[1], (double) K40_Ch};
     shared_ptr<Calibration> ret = prop->getCalibration();
@@ -234,8 +402,6 @@ void NcManager::onRecvPackage(nucare::DetectorComponent* dev, std::shared_ptr<De
 
     prop->debugInfo.spcDoserate0 = prop->mDoserate;
     prop->debugInfo.spcDoserate1= prop->mDoserate;
-
-
     //Calcuate Dose GM
 //    auto avgGM = prop->getGmCount();
 //    auto DoseGM = NcLibrary::GM_to_nSV(avgGM);
@@ -271,8 +437,6 @@ void NcManager::onRecvPackage(nucare::DetectorComponent* dev, std::shared_ptr<De
 //    if (pkg->hasNeutron) {
 //        prop->setNeutron(mAvgNeutron.addedValue(pkg->neutron));
 //    }
-
-
     // TODO DEBUG
 //    if (prop->mDoserate > 100) {
 //        prop->setCps(10000);
@@ -311,6 +475,8 @@ ClogEstimation NcManager::estimateClog(std::shared_ptr<Spectrum> spc, DetectorCo
 
     Spectrum bgr;
     if (auto rawBgr = prop->getBackgroundSpc()) {
+        logD() << "estimateClog: rawBgr->getAcqTime()=" << rawBgr->getAcqTime()
+               << "  spc->getAcqTime()=" << spc->getAcqTime();
         NcLibrary::smoothSpectrum(*rawBgr, bgr, prop->getSmoothParams());
 
         for (int i = 0; i < bgr.getSize(); i++) {
@@ -344,35 +510,59 @@ ClogEstimation NcManager::estimateClog(std::shared_ptr<Spectrum> spc, DetectorCo
     // Step 5:BGSubtration
     PeakSearch::BGSubtration(smoothSpc, BGEroChSpec, &PPChSpec, prop->getSmoothParams()); // Chek
 
-    Energy totalEn1 = 0;
-    Energy totalEn2 = 0;
-    Threshold range1 = {26 - 1, 47 - 1};
-    Threshold range2 = {126 - 1, 163 - 1};
-    for (int i = range1.first; i <= range1.second; i++) {
-        totalEn1 += PPChSpec[i];
-    }
-    for (int i = range2.first; i <= range2.second; i++) {
-        totalEn2 += PPChSpec[i];
-    }
+    // Năng lượng đặc trưng 2 đỉnh nguồn (keV)
+    const double PeakEn1 = 80.0;
+    const double PeakEn2 = 356.0;
 
-    totalEn1 /= (6.943520005 * spc->getAcqTime());
-    totalEn2 /= (9.796878 * spc->getAcqTime());
+    // Chuyển energy → channel dự kiến theo calibration hiện tại
+    const double PeakCh1_Exp = NcLibrary::energyToChannel(PeakEn1, prop->getCoeffcients());
+    const double PeakCh2_Exp = NcLibrary::energyToChannel(PeakEn2, prop->getCoeffcients());
 
-    // A -> SUm1, B -> Sum2
-    // Ba -> (80, 360), {
-    // Eu -> (122, 344)
-    // TP -> 0.6
-//    auto settingMgr = 이은채
-    auto settingMgr = ComponentManager::instance().settingManager();
-    auto isotopeProfile = settingMgr->getIsotopeProfile();
-    Threshold srcThreshold = isotopeProfile->threshold_energy;
+    // Cửa sổ tìm kiếm = ±30% quanh expected channel
+    const int spcSize = static_cast<int>(PPChSpec.getSize()) - 1;
+    const uint win1_lo = static_cast<uint>(std::max(0.0, PeakCh1_Exp * 0.7));
+    const uint win1_hi = static_cast<uint>(std::min((double)spcSize, PeakCh1_Exp * 1.3));
+    const uint win2_lo = static_cast<uint>(std::max(0.0, PeakCh2_Exp * 0.85));
+    const uint win2_hi = static_cast<uint>(std::min((double)spcSize, PeakCh2_Exp * 1.15));
 
-    auto thickness = ndt::estimate_tc_from_Est_E2(totalEn1, totalEn2, {-0.000896378402362090, 0.171065811466785, 1.84343479877323},
+    // Fit Gaussian cho 2 đỉnh và tính net count (∫ trong ±FWHM/2)
+    const auto fit1 = fitGaussianPeak(PPChSpec, (int)win1_lo, (int)win1_hi);
+    const auto fit2 = fitGaussianPeak(PPChSpec, (int)win2_lo, (int)win2_hi);
+
+    logD() << "Peak1(" << PeakEn1 << "keV): expCh=" << PeakCh1_Exp
+           << " mu=" << fit1.mu << " sigma=" << fit1.sigma << " FWHM=" << fit1.fwhm
+           << (fit1.valid ? " [Gauss OK]" : " [failed]");
+    logD() << "Peak2(" << PeakEn2 << "keV): expCh=" << PeakCh2_Exp
+           << " mu=" << fit2.mu << " sigma=" << fit2.sigma << " FWHM=" << fit2.fwhm
+           << (fit2.valid ? " [Gauss OK]" : " [failed]");
+
+    const Energy totalEn1 = getNetCountFromGauss(fit1) / ( spc->getAcqTime());
+    const Energy totalEn2 = getNetCountFromGauss(fit2) / (spc->getAcqTime());
+
+    //thicknesss at Peak 1 80 keV
+    // Measure without clog
+    float A1=47.63057; //unit: cps
+    float A2=212.3888;
+    float miu_en1=0.5454;
+    float miu_en2=0.2639;
+
+    auto thickness_peak1 = (totalEn1 > 0 && A1 > 0) ? std::log(A1/totalEn1) / miu_en1 * 10.0 : 0.0;
+    auto thickness_peak2 = (totalEn2 > 0 && A2 > 0) ? std::log(A2/totalEn2) / miu_en2 * 10.0 : 0.0;
+
+    saveFitResultToFile(PPChSpec, spc->getAcqTime(),
+                        fit1, PeakEn1,
+                        fit2, PeakEn2,
+                        totalEn1, totalEn2,
+                        thickness_peak1, thickness_peak2);
+
+
+    auto thickness = thickness_peak2; /*ndt::estimate_tc_from_Est_E2(totalEn1, totalEn2, {-0.000896378402362090, 0.171065811466785, 1.84343479877323},
                                  ndt::Mass_Attenuation_coefficient_Iron(srcThreshold.first, ALUMINUM),
                                  ndt::Mass_Attenuation_coefficient_Iron(srcThreshold.second, ALUMINUM),
                                  ndt::Mass_Attenuation_coefficient_Iron(srcThreshold.first, IRON),
                                  ndt::Mass_Attenuation_coefficient_Iron(srcThreshold.second, IRON),
                                  settingMgr->getPipeThickness(), 0.5);
+                                 */
 
     return ClogEstimation{
         .thickness = thickness,

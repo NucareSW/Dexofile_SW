@@ -100,8 +100,6 @@ std::shared_ptr<DetectorPackage> detector_raw_package_convert(const Package::Pay
 
         if (count > 15000) {
             count = 0;
-        } else if (count < 0) {
-            count = 0;
         }
 
         (*ret->spc)[i] = count;
@@ -460,7 +458,6 @@ void DetectorComponent::processDetectorInfo(const QByteArray &data)
 
             auto gcResponse            = std::make_shared<GcResponse>();
             gcResponse->gc             = be16toh(rawPayload->gain);
-            gcResponse->k40Ch          = be16toh(rawPayload->k40Ch);
             gcResponse->k40Ch          = be16toh(rawPayload->k40Ch);
             gcResponse->detType        = be16toh(rawPayload->detectorCode);
             gcResponse->cs137Ch1       = be16toh(rawPayload->ch32Kev);
