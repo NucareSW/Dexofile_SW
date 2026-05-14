@@ -262,7 +262,7 @@ void HomePage::stateChanged(AccumulatorState state)
         double pipeThickness = settingMgr->getPipeThickness();
         event.setPipeThickness(pipeThickness);
         event.setClogThickness(clog.thickness);
-        double clogRatio = pipeThickness > 0 ? clog.thickness / pipeThickness : 0.0;
+        double clogRatio = pipeThickness > 0 ? clog.thickness / settingMgr->getPipeDiameter() : 0.0;
         event.setClogRatio(clogRatio);
 
         // Cập nhật UI labels với kết quả tính clog

@@ -1,6 +1,6 @@
 cmake_minimum_required(VERSION 3.5)
 
-project(NDT VERSION 0.1 LANGUAGES CXX)
+project(NDT VERSION 0.1 LANGUAGES C CXX)
 
 set(CMAKE_INCLUDE_CURRENT_DIR ON)
 
@@ -96,6 +96,8 @@ set(PROJECT_SOURCES
         component/settingmanager.cpp
         component/ncmanager.h
         component/ncmanager.cpp
+        component/gamma_ndt.h
+        component/gamma_ndt.c
         component/SpectrumAccumulator.cpp
         component/SpectrumAccumulator.h
         model/Background.h
@@ -160,6 +162,8 @@ set(PROJECT_SOURCES
         util/dualsocketnotifier.h
         util/dualsocketnotifier.cpp
 )
+
+set_source_files_properties(component/gamma_ndt.c PROPERTIES LANGUAGE C)
 
 if(${QT_VERSION_MAJOR} GREATER_EQUAL 6)
     qt_add_executable(NDT

@@ -7,6 +7,7 @@
 #include "component/settingmanager.h"
 #include "util/NcLibrary.h"
 #include "util/ndt_util.h"
+#include "component/gamma_ndt.h"
 #include <vector>
 #include <cmath>
 #include <QElapsedTimer>
@@ -170,7 +171,8 @@ static void saveFitResultToFile(const Spectrum& ppChSpec,
                                 const GaussFitResult& fit1, double peakEn1,
                                 const GaussFitResult& fit2, double peakEn2,
                                 double totalEn1, double totalEn2,
-                                double thickness_peak1, double thickness_peak2)
+                                double thickness_peak1, double thickness_peak2,
+                                double thickness_peak_fit2)
 {
     const QString filePath = ComponentManager::instance().dataDir() + "/NDT_FitResult.txt";
     QFile f(filePath);
@@ -202,6 +204,7 @@ static void saveFitResultToFile(const Spectrum& ppChSpec,
            .arg(fit2.valid ? "OK" : "failed");
     ts << QString("Thickness Peak1: %1 mm\n").arg(thickness_peak1, 0, 'f', 3);
     ts << QString("Thickness Peak2: %1 mm\n").arg(thickness_peak2, 0, 'f', 3);
+    ts << QString("Thickness Peak2 (gamma_ndt): %1 mm\n").arg(thickness_peak_fit2, 0, 'f', 3);
     ts << "PPChSpec[" << ppChSpec.getSize() << "]: " << ppChSpec.toString() << "\n";
     ts << "\n";
 }
@@ -487,7 +490,7 @@ ClogEstimation NcManager::estimateClog(std::shared_ptr<Spectrum> spc, DetectorCo
     }
 
     // Processing
-    // Step 0: Generate tranfer function
+    logD() << "estimateClog: step TransferFunct";
     BinSpectrum TF;
     BinSpectrum BinSpec;
     BinSpectrum BGEroBinSpec;
@@ -495,20 +498,19 @@ ClogEstimation NcManager::estimateClog(std::shared_ptr<Spectrum> spc, DetectorCo
     Spectrum PPChSpec;
     PeakSearch::TransferFunct(TF, prop->getFWHM(), prop->getCoeffcients());
 
-      // Step 2: ReBinning
-    double _BinSpec[BINSIZE];
+    logD() << "estimateClog: step ReBinning";
     NcLibrary::ReBinning(smoothSpc, TF, BinSpec);
 
-    // Step 3: BGErosion
+    logD() << "estimateClog: step BGErosion";
     PeakSearch::BGErosion(BinSpec, prop->interCoeff, BGEroBinSpec, TF, prop->getCoeffcients());
 
-//    // Step 4:ReturnReBinning
-    Spectrum reBincEmptySpc, _reBincEmptySpc;
+    logD() << "estimateClog: step ReturnReBinning";
+    Spectrum reBincEmptySpc;
     PeakSearch::ReturnReBinning(BGEroBinSpec, TF, reBincEmptySpc);
     NcLibrary::smoothSpectrum(reBincEmptySpc, BGEroChSpec, prop->getSmoothParams());
 
-    // Step 5:BGSubtration
-    PeakSearch::BGSubtration(smoothSpc, BGEroChSpec, &PPChSpec, prop->getSmoothParams()); // Chek
+    logD() << "estimateClog: step BGSubtration";
+    PeakSearch::BGSubtration(smoothSpc, BGEroChSpec, &PPChSpec, prop->getSmoothParams());
 
     // Năng lượng đặc trưng 2 đỉnh nguồn (keV)
     const double PeakEn1 = 80.0;
@@ -518,16 +520,19 @@ ClogEstimation NcManager::estimateClog(std::shared_ptr<Spectrum> spc, DetectorCo
     const double PeakCh1_Exp = NcLibrary::energyToChannel(PeakEn1, prop->getCoeffcients());
     const double PeakCh2_Exp = NcLibrary::energyToChannel(PeakEn2, prop->getCoeffcients());
 
-    // Cửa sổ tìm kiếm = ±30% quanh expected channel
+    // Cửa sổ tìm kiếm — dùng int để tránh UB khi cast âm sang uint
     const int spcSize = static_cast<int>(PPChSpec.getSize()) - 1;
-    const uint win1_lo = static_cast<uint>(std::max(0.0, PeakCh1_Exp * 0.7));
-    const uint win1_hi = static_cast<uint>(std::min((double)spcSize, PeakCh1_Exp * 1.3));
-    const uint win2_lo = static_cast<uint>(std::max(0.0, PeakCh2_Exp * 0.85));
-    const uint win2_hi = static_cast<uint>(std::min((double)spcSize, PeakCh2_Exp * 1.15));
+    const int win1_lo = std::max(0, std::min(spcSize, (int)(PeakCh1_Exp * 0.7)));
+    const int win1_hi = std::max(0, std::min(spcSize, (int)(PeakCh1_Exp * 1.3)));
+    const int win2_lo = std::max(0, std::min(spcSize, (int)(PeakCh2_Exp * 0.85)));
+    const int win2_hi = std::max(0, std::min(spcSize, (int)(PeakCh2_Exp * 1.15)));
 
-    // Fit Gaussian cho 2 đỉnh và tính net count (∫ trong ±FWHM/2)
-    const auto fit1 = fitGaussianPeak(PPChSpec, (int)win1_lo, (int)win1_hi);
-    const auto fit2 = fitGaussianPeak(PPChSpec, (int)win2_lo, (int)win2_hi);
+    logD() << "estimateClog: PeakCh1=" << PeakCh1_Exp << " win[" << win1_lo << "," << win1_hi << "]"
+           << "  PeakCh2=" << PeakCh2_Exp << " win[" << win2_lo << "," << win2_hi << "]";
+
+    logD() << "estimateClog: step fitGaussianPeak";
+    const auto fit1 = fitGaussianPeak(PPChSpec, win1_lo, win1_hi);
+    const auto fit2 = fitGaussianPeak(PPChSpec, win2_lo, win2_hi);
 
     logD() << "Peak1(" << PeakEn1 << "keV): expCh=" << PeakCh1_Exp
            << " mu=" << fit1.mu << " sigma=" << fit1.sigma << " FWHM=" << fit1.fwhm
@@ -542,21 +547,34 @@ ClogEstimation NcManager::estimateClog(std::shared_ptr<Spectrum> spc, DetectorCo
     //thicknesss at Peak 1 80 keV
     // Measure without clog
     float A1=47.63057; //unit: cps
-    float A2=212.3888;
     float miu_en1=0.5454;
+    float A2=212.0354;
     float miu_en2=0.2639;
 
     auto thickness_peak1 = (totalEn1 > 0 && A1 > 0) ? std::log(A1/totalEn1) / miu_en1 * 10.0 : 0.0;
     auto thickness_peak2 = (totalEn2 > 0 && A2 > 0) ? std::log(A2/totalEn2) / miu_en2 * 10.0 : 0.0;
 
+    // Peak2 (356 keV): use gamma_ndt Beer-Lambert + scatter buildup model
+    logD() << "estimateClog: step gamma_thickness, totalEn2=" << totalEn2;
+    double thickness_peak_fit2 = 0.0;
+    {
+        int ret = gamma_thickness(totalEn2, &GAMMA_DEFAULT, &thickness_peak_fit2);
+        if (ret != GAMMA_OK) {
+            logW() << "gamma_thickness failed, code=" << ret << " nc2=" << totalEn2;
+            thickness_peak_fit2 = 0.0;
+        }
+    }
+    if(thickness_peak_fit2<0) thickness_peak_fit2=0;
+
+    logD() << "estimateClog: step saveFitResultToFile";
     saveFitResultToFile(PPChSpec, spc->getAcqTime(),
                         fit1, PeakEn1,
                         fit2, PeakEn2,
                         totalEn1, totalEn2,
-                        thickness_peak1, thickness_peak2);
+                        thickness_peak1, thickness_peak2, thickness_peak_fit2);
 
 
-    auto thickness = thickness_peak2; /*ndt::estimate_tc_from_Est_E2(totalEn1, totalEn2, {-0.000896378402362090, 0.171065811466785, 1.84343479877323},
+    auto thickness = thickness_peak_fit2; /*ndt::estimate_tc_from_Est_E2(totalEn1, totalEn2, {-0.000896378402362090, 0.171065811466785, 1.84343479877323},
                                  ndt::Mass_Attenuation_coefficient_Iron(srcThreshold.first, ALUMINUM),
                                  ndt::Mass_Attenuation_coefficient_Iron(srcThreshold.second, ALUMINUM),
                                  ndt::Mass_Attenuation_coefficient_Iron(srcThreshold.first, IRON),
