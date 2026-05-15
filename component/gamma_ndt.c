@@ -1,5 +1,4 @@
-/*
- * gamma_ndt.c  —  Implementation
+/* * gamma_ndt.c  —  Implementation
  */
 #include "gamma_ndt.h"
 #include <math.h>
@@ -10,9 +9,9 @@
 /* ── Default parameters (fitted from calibration data) ────── */
 const GammaModel GAMMA_DEFAULT = {
     .N0  = 212.04,     /* air NC2 rate  (127433.3 counts / 601s) [CPS] */
-    .mu1 = 0.02608,    /* mm⁻¹  ≈ 0.261 cm⁻¹  (theory: 0.264)        */
-    .S   = 9.630,      /* scatter sat.  (5787.3 counts  / 601s) [CPS]  */
-    .mus = 0.27760,    /* mm⁻¹  (scatter saturates at ~1/mus≈4mm)      */
+    .mu1 = 0.02951,    /* mm⁻¹  ≈ 0.261 cm⁻¹  (theory: 0.264)        */
+    .S   = 20.2799,      /* scatter sat.  (5787.3 counts  / 601s) [CPS] >>increase to 9.56% */
+    .mus = 0.11291,    /* mm⁻¹  (scatter saturates at ~1/mus≈4mm)      */
 };
 
 /* ═══════════════════════════════════════════════════════════
