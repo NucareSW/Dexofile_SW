@@ -8,10 +8,10 @@
 
 /* ── Default parameters (fitted from calibration data) ────── */
 const GammaModel GAMMA_DEFAULT = {
-    .N0  = 212.04,     /* air NC2 rate  (127433.3 counts / 601s) [CPS] */
-    .mu1 = 0.02318,    /* mm⁻¹  ≈ 0.261 cm⁻¹  (theory: 0.264)        */
-    .S   = 4.9583,      /* scatter sat.  (5787.3 counts  / 601s) [CPS] >>increase to 9.56%  >> 2.3%*/
-    .mus = 0.08190,    /* mm⁻¹  (scatter saturates at ~1/mus≈4mm)      */
+    .N0  = 287.1098,   /* air NC2 rate  (172553.0 counts / 601s) [CPS] */
+    .mu1 = 0.03589,    /* mm-1  (0.3589 cm-1)                          */
+    .S   = 57.7433,    /* scatter sat.  (34703.7 counts  / 601s) [CPS] */
+    .mus = 0.07231,    /* mm-1  (scatter sat. ~1/mus=13.8mm)            */
 };
 
 /* ═══════════════════════════════════════════════════════════
