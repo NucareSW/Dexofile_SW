@@ -17,9 +17,14 @@
 #ifndef GAMMA_NDT_H
 #define GAMMA_NDT_H
 
+#include <time.h>
+
 #ifdef __cplusplus
 extern "C" {
 #endif
+
+/* ── Source decay ─────────────────────────────────────────── */
+#define BA133_T_HALF_DAYS  3837.0   /* Ba-133 T½ = 10.51 years */
 
 /* ── Return codes ──────────────────────────────────────────── */
 #define GAMMA_OK           0
@@ -87,6 +92,32 @@ void gamma_update_n0(GammaModel *m, double nc2_air, int n_samples);
 /* Validate fitted model: print errors at each calibration point */
 void gamma_validate(const GammaModel *m,
                     const CalibPoint *pts, int n_pts);
+
+/*
+ * Decay correction — trả về model MỚI với N0 và S đã scale theo decay.
+ * mu1 và mus KHÔNG thay đổi (thuộc tính vật liệu, không phụ thuộc nguồn).
+ *
+ *   gamma_apply_decay()       — truyền số ngày kể từ lúc hiệu chỉnh
+ *   gamma_apply_decay_epoch() — truyền Unix timestamp ngày hiệu chỉnh,
+ *                               hàm tự lấy ngày hôm nay bằng time(NULL)
+ *
+ * Ví dụ:
+ *   // 8 ngày sau hiệu chỉnh:
+ *   GammaModel m = gamma_apply_decay(&GAMMA_DEFAULT, 8.0, BA133_T_HALF_DAYS);
+ *
+ *   // Dùng epoch ngày hiệu chỉnh (2026-06-19):
+ *   struct tm t = {0};
+ *   t.tm_year=126; t.tm_mon=5; t.tm_mday=19;
+ *   GammaModel m = gamma_apply_decay_epoch(&GAMMA_DEFAULT,
+ *                                          mktime(&t), BA133_T_HALF_DAYS);
+ */
+GammaModel gamma_apply_decay(const GammaModel *m,
+                              double days_since_calib,
+                              double t_half_days);
+
+GammaModel gamma_apply_decay_epoch(const GammaModel *m,
+                                   time_t calib_epoch,
+                                   double t_half_days);
 
 #ifdef __cplusplus
 }

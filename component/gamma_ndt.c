@@ -5,13 +5,18 @@
 #include <stdio.h>
 #include <string.h>
 #include <float.h>
+#include <time.h>
+
+#ifndef M_LN2
+#define M_LN2 0.6931471805599453
+#endif
 
 /* ── Default parameters (fitted from calibration data) ────── */
 const GammaModel GAMMA_DEFAULT = {
-    .N0  = 287.1098,   /* air NC2 rate  (172553.0 counts / 601s) [CPS] */
-    .mu1 = 0.03589,    /* mm-1  (0.3589 cm-1)                          */
-    .S   = 57.7433,    /* scatter sat.  (34703.7 counts  / 601s) [CPS] */
-    .mus = 0.07231,    /* mm-1  (scatter sat. ~1/mus=13.8mm)            */
+    .N0  = 277.0416,   /* air NC2 rate  (172553.0 counts / 601s) [CPS] */
+    .mu1 = 0.08411,    /* mm-1  (0.3589 cm-1)                          */
+    .S   = 136.5015,    /* scatter sat.  (34703.7 counts  / 601s) [CPS] */
+    .mus = 0.13885,    /* mm-1  (scatter sat. ~1/mus=13.8mm)            */
 };
 
 /* ═══════════════════════════════════════════════════════════
@@ -234,6 +239,30 @@ int gamma_calibrate(const CalibPoint *pts, int n_pts,
     m_out->S   = simp[0][1];
     m_out->mus = simp[0][2];
     return GAMMA_OK;
+}
+
+/* ═══════════════════════════════════════════════════════════
+ * Decay correction
+ * ═══════════════════════════════════════════════════════════ */
+GammaModel gamma_apply_decay(const GammaModel *m,
+                              double days_since_calib,
+                              double t_half_days)
+{
+    GammaModel out = *m;
+    if (days_since_calib <= 0.0 || t_half_days <= 0.0)
+        return out;
+    double f = exp(-M_LN2 * days_since_calib / t_half_days);
+    out.N0 *= f;
+    out.S  *= f;
+    return out;
+}
+
+GammaModel gamma_apply_decay_epoch(const GammaModel *m,
+                                   time_t calib_epoch,
+                                   double t_half_days)
+{
+    double days = difftime(time(NULL), calib_epoch) / 86400.0;
+    return gamma_apply_decay(m, days, t_half_days);
 }
 
 /* ═══════════════════════════════════════════════════════════

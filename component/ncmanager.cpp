@@ -558,7 +558,17 @@ ClogEstimation NcManager::estimateClog(std::shared_ptr<Spectrum> spc, DetectorCo
     logD() << "estimateClog: step gamma_thickness, totalEn2=" << totalEn2;
     double thickness_peak_fit2 = 0.0;
     {
-        int ret = gamma_thickness(totalEn2, &GAMMA_DEFAULT, &thickness_peak_fit2);
+        // Calibration date: 2026-06-19
+        struct tm t_calib = {};
+        t_calib.tm_year = 126;   // 2026 - 1900
+        t_calib.tm_mon  =   5;   // June (0-indexed)
+        t_calib.tm_mday =  23;
+        const time_t calib_epoch = mktime(&t_calib);
+
+        const GammaModel m = gamma_apply_decay_epoch(&GAMMA_DEFAULT,
+                                                      calib_epoch,
+                                                      BA133_T_HALF_DAYS);
+        int ret = gamma_thickness(totalEn2, &m, &thickness_peak_fit2);
         if (ret != GAMMA_OK) {
             logW() << "gamma_thickness failed, code=" << ret << " nc2=" << totalEn2;
             thickness_peak_fit2 = 0.0;
